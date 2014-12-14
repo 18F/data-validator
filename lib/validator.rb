@@ -10,6 +10,43 @@ module Validator
   class Exception < ::Exception
   end
 
+  # Collects schema violations and produces a string representation of them.
+  class Violations
+    attr_writer :introduction
+    attr_reader :violations
+
+    def initialize
+      @introduction = ''
+      @violations = []
+    end
+
+    def add(violation)
+      @violations.push violation
+    end
+
+    # Concatenates the messages from another Violations objects to this
+    # object. Will nest the concatenated violations by two spaces.
+    # +introduction+:: summary of the concatenated set of violations
+    # +incoming+:: another Violations object instance
+    def concat(introduction, incoming)
+      add introduction
+      @violations.concat incoming.violations.map {|i| '  ' + i}
+    end
+
+    def has_violations?
+      !@violations.empty?
+    end
+
+    # Produces a string of all of the collected violations.
+    def to_s()
+      if @introduction.empty?
+        @violations.join("\n")
+      else
+        @introduction + "\n  " + @violations.join("\n  ")
+      end
+    end
+  end
+
   # Validates data hashes against a schema.
   #
   # The filename of the schema should be of the form "object_schema.yml",
@@ -63,9 +100,9 @@ module Validator
 
       violations = validate_schema
 
-      unless violations.empty?
-        raise SchemaException.new(
-          "Invalid schema:\n  #{violations.join("\n  ")}")
+      if violations.has_violations?
+        violations.introduction = "Invalid schema:"
+        raise SchemaException.new violations
       end
 
       @schema['properties'].each do |unused_name, criteria|
@@ -92,13 +129,13 @@ module Validator
       end
 
       primary_key = @schema['primary_key']
-      violations = []
+      violations = Violations.new
 
       parsed.each do |element|
-        element_violations = []
+        element_violations = Violations.new
 
         if primary_key and !element.member? primary_key
-          element_violations << "  missing primary key field #{primary_key}:"
+          element_violations.add "missing primary key field #{primary_key}:"
         end
 
         @schema['properties'].each do |name, criteria|
@@ -107,37 +144,37 @@ module Validator
           expected_type = criteria['type']
           if expected_type == ::TrueClass
             unless value == true or value == false
-              element_violations << ("  #{name}: should be boolean, " +
+              element_violations.add("#{name}: should be boolean, " +
                 "but is of type #{value.class}")
             end
           elsif !value.instance_of? expected_type
-            element_violations << ("  #{name}: should be of type " +
+            element_violations.add("#{name}: should be of type " +
               "#{expected_type}, but is of type #{value.class}")
           end
         end
 
         element.keys.each do |key|
           unless @schema['properties'].member? key
-            element_violations << "  unknown field #{key}:"
+            element_violations.add "unknown field #{key}:"
           end
         end
 
-        unless element_violations.empty?
-          violations << "Malformed object:\n#{element.to_yaml}"
-          violations.concat element_violations
+        if element_violations.has_violations?
+          violations.concat("Malformed object:\n#{element.to_yaml}",
+            element_violations)
         end
       end
 
-      unless violations.empty?
-        raise Exception.new violations.join("\n")
+      if violations.has_violations?
+        raise Exception.new violations
       end
     end
 
     private
 
     # Validates that the schema contains all the required fields, all of the
-    # correct type. Returns a list of schema violations; the empty list
-    # indicates that validation succeeded.
+    # correct type. Returns a Violations object; if empty, the validation
+    # succeeded.
     def validate_schema
       violations = validate_fields(@schema, REQUIRED_SCHEMA_FIELDS,
         OPTIONAL_SCHEMA_FIELDS)
@@ -146,20 +183,18 @@ module Validator
       properties = @schema['properties']
 
       if !properties
-        violations << "no properties defined"
+        violations.add "no properties defined"
       else
         if primary_key and !properties.member? primary_key
-          violations << "missing primary_key: property"
+          violations.add "missing primary_key: property"
         end
 
         properties.each do |name, criteria|
           property_violations = validate_fields(criteria,
             REQUIRED_PROPERTY_FIELDS, OPTIONAL_PROPERTY_FIELDS)
-          unless property_violations.empty?
-            violations << "malformed property #{name}:"
-            property_violations.each do |violation|
-              violations << "  " + violation
-            end
+          if property_violations.has_violations?
+            violations.concat("malformed property #{name}:",
+              property_violations)
           end
         end
       end
@@ -168,12 +203,12 @@ module Validator
     end
 
     def validate_fields(entity, required_fields, optional_fields)
-      violations = []
+      violations = Violations.new
       required_fields.each do |field, type|
         if entity.member? field
           validate_type(entity, field, type, violations)
         else
-          violations << "missing #{field}:"
+          violations.add "missing #{field}:"
         end
       end
 
@@ -186,7 +221,7 @@ module Validator
 
     def validate_type(entity, field, type, violations)
       unless entity[field].instance_of? type
-        violations << ("#{field}: should be of type #{type}, " +
+        violations.add ("#{field}: should be of type #{type}, " +
          "but is of type #{entity[field].class}")
       end
     end
