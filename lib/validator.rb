@@ -11,38 +11,38 @@ module Validator
   end
 
   # Collects schema violations and produces a string representation of them.
-  class Violations
+  class Errors
     attr_writer :introduction
-    attr_reader :violations
+    attr_reader :errors
 
     def initialize
       @introduction = ''
-      @violations = []
+      @errors = []
     end
 
-    def add(violation)
-      @violations.push violation
+    def add(error)
+      @errors.push error
     end
 
-    # Concatenates the messages from another Violations objects to this
-    # object. Will nest the concatenated violations by two spaces.
-    # +introduction+:: summary of the concatenated set of violations
-    # +incoming+:: another Violations object instance
+    # Concatenates the messages from another Errors object to this
+    # object. Will nest the concatenated error messages by two spaces.
+    # +introduction+:: summary of the concatenated set of errors
+    # +incoming+:: another Errors object instance
     def concat(introduction, incoming)
       add introduction
-      @violations.concat incoming.violations.map {|i| '  ' + i}
+      @errors.concat incoming.errors.map {|i| '  ' + i}
     end
 
-    def has_violations?
-      !@violations.empty?
+    def has_errors?
+      !@errors.empty?
     end
 
-    # Produces a string of all of the collected violations.
+    # Produces a string of all of the collected errors.
     def to_s()
       if @introduction.empty?
-        @violations.join("\n")
+        @errors.join("\n")
       else
-        @introduction + "\n  " + @violations.join("\n  ")
+        @introduction + "\n  " + @errors.join("\n  ")
       end
     end
   end
@@ -98,11 +98,11 @@ module Validator
         raise SchemaException.new "Schema failed to parse"
       end
 
-      violations = validate_schema
+      errors = validate_schema
 
-      if violations.has_violations?
-        violations.introduction = "Invalid schema:"
-        raise SchemaException.new violations
+      if errors.has_errors?
+        errors.introduction = "Invalid schema:"
+        raise SchemaException.new errors
       end
 
       @schema['properties'].each do |unused_name, criteria|
@@ -129,13 +129,13 @@ module Validator
       end
 
       primary_key = @schema['primary_key']
-      violations = Violations.new
+      errors = Errors.new
 
       parsed.each do |element|
-        element_violations = Violations.new
+        element_errors = Errors.new
 
         if primary_key and !element.member? primary_key
-          element_violations.add "missing primary key field #{primary_key}:"
+          element_errors.add "missing primary key field #{primary_key}:"
         end
 
         @schema['properties'].each do |name, criteria|
@@ -144,84 +144,83 @@ module Validator
           expected_type = criteria['type']
           if expected_type == ::TrueClass
             unless value == true or value == false
-              element_violations.add("#{name}: should be boolean, " +
+              element_errors.add("#{name}: should be boolean, " +
                 "but is of type #{value.class}")
             end
           elsif !value.instance_of? expected_type
-            element_violations.add("#{name}: should be of type " +
+            element_errors.add("#{name}: should be of type " +
               "#{expected_type}, but is of type #{value.class}")
           end
         end
 
         element.keys.each do |key|
           unless @schema['properties'].member? key
-            element_violations.add "unknown field #{key}:"
+            element_errors.add "unknown field #{key}:"
           end
         end
 
-        if element_violations.has_violations?
-          violations.concat("Malformed object:\n#{element.to_yaml}",
-            element_violations)
+        if element_errors.has_errors?
+          errors.concat("Malformed object:\n#{element.to_yaml}",
+            element_errors)
         end
       end
 
-      if violations.has_violations?
-        raise Exception.new violations
+      if errors.has_errors?
+        raise Exception.new errors
       end
     end
 
     private
 
     # Validates that the schema contains all the required fields, all of the
-    # correct type. Returns a Violations object; if empty, the validation
+    # correct type. Returns a Errors object; if empty, the validation
     # succeeded.
     def validate_schema
-      violations = validate_fields(@schema, REQUIRED_SCHEMA_FIELDS,
+      errors = validate_fields(@schema, REQUIRED_SCHEMA_FIELDS,
         OPTIONAL_SCHEMA_FIELDS)
 
       primary_key = @schema['primary_key']
       properties = @schema['properties']
 
       if !properties
-        violations.add "no properties defined"
+        errors.add "no properties defined"
       else
         if primary_key and !properties.member? primary_key
-          violations.add "missing primary_key: property"
+          errors.add "missing primary_key: property"
         end
 
         properties.each do |name, criteria|
-          property_violations = validate_fields(criteria,
+          property_errors = validate_fields(criteria,
             REQUIRED_PROPERTY_FIELDS, OPTIONAL_PROPERTY_FIELDS)
-          if property_violations.has_violations?
-            violations.concat("malformed property #{name}:",
-              property_violations)
+          if property_errors.has_errors?
+            errors.concat "malformed property #{name}:", property_errors
           end
         end
       end
 
-      violations
+      errors
     end
 
     def validate_fields(entity, required_fields, optional_fields)
-      violations = Violations.new
+      errors = Errors.new
       required_fields.each do |field, type|
         if entity.member? field
-          validate_type(entity, field, type, violations)
+          validate_type(entity, field, type, errors)
         else
-          violations.add "missing #{field}:"
+          errors.add "missing #{field}:"
         end
       end
 
       optional_fields.each do |field, type|
-        validate_type(entity, field, type, violations) if entity.member? field
+        validate_type(entity, field, type, errors) if entity.member? field
       end
 
-      violations
+      errors
     end
 
-    def validate_type(entity, field, type, violations)
+    def validate_type(entity, field, type, errors)
       unless entity[field].instance_of? type
-        violations.add ("#{field}: should be of type #{type}, " +
+        errors.add ("#{field}: should be of type #{type}, " +
          "but is of type #{entity[field].class}")
       end
     end
